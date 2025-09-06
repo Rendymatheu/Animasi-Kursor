@@ -1,0 +1,214 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Interactive Dragon Cursor — Brush Style 🐉</title>
+  <style>
+    html, body { height: 100%; margin: 0; }
+    body { background: #e8e2d6; overflow: hidden; cursor: none; }
+    canvas { display: block; width: 100vw; height: 100vh; }
+    .hint { position: fixed; left: 16px; bottom: 16px; background: rgba(0,0,0,.5); color: #fff;
+       padding: 8px 10px; border-radius: 12px; font-size: 12px; user-select: none; }
+  </style>
+</head>
+<body>
+  <canvas id="stage"></canvas>
+  <div class="hint">Move mouse / drag — [H] toggle head, [R] randomize, [Space] pause</div>
+
+  <script>
+    // ===== Canvas bootstrap
+    const canvas = document.getElementById('stage');
+    const dpr = Math.max(1, Math.min(2, window.devicePixelRatio || 1));
+    const ctx = canvas.getContext('2d');
+    function resize(){
+      canvas.width = Math.floor(innerWidth * dpr);
+      canvas.height = Math.floor(innerHeight * dpr);
+      canvas.style.width = innerWidth + 'px';
+      canvas.style.height = innerHeight + 'px';
+      ctx.setTransform(dpr,0,0,dpr,0,0);
+    }
+    addEventListener('resize', resize, { passive: true });
+    resize();
+
+    // ===== Pointer
+    const pointer = { x: innerWidth/2, y: innerHeight/2 };
+    addEventListener('mousemove', e => { pointer.x = e.clientX; pointer.y = e.clientY; });
+    addEventListener('touchmove', e => { const t = e.touches[0]; if (t) { pointer.x = t.clientX; pointer.y = t.clientY; } }, { passive: true });
+
+    // ===== Parameters
+    const params = {
+      segments: 38,
+      segLen: 16,
+      follow: 0.34,
+      wobbleAmp: 1.05,
+      wobbleFreq: 2.1,
+      ribCount: 26,
+      ribSpread: 1.6,
+      fade: 0.06,
+      headVisible: true
+    };
+
+    // Spine state
+    const spine = new Array(params.segments).fill(0).map((_,i)=>({
+      x: pointer.x - i*params.segLen,
+      y: pointer.y,
+      ang: 0
+    }));
+
+    // Helpers
+    const lerp = (a,b,t)=>a+(b-a)*t;
+    const clamp = (n,a,b)=>Math.max(a,Math.min(b,n));
+
+    // ===== Head (brushy oriental dragon)
+    function drawHead(p, angle){
+      if (!params.headVisible) return;
+      ctx.save();
+      ctx.translate(p.x, p.y);
+      ctx.rotate(angle);
+
+      // Main head blob
+      ctx.beginPath();
+      ctx.moveTo(16,0);
+      ctx.quadraticCurveTo(2,-10,-12,-8);
+      ctx.quadraticCurveTo(-22,-2,-10,0);
+      ctx.quadraticCurveTo(-22, 2,-12, 8);
+      ctx.quadraticCurveTo(2,10,16,0);
+      const grad = ctx.createRadialGradient(6,0,2, 0,0,24);
+      grad.addColorStop(0,'rgba(0,0,0,0.95)');
+      grad.addColorStop(1,'rgba(0,0,0,0.6)');
+      ctx.fillStyle = grad; ctx.fill();
+
+      // Ears/horns
+      ctx.strokeStyle = 'rgba(0,0,0,0.85)';
+      ctx.lineWidth = 2;
+      for (let i=0;i<2;i++){
+        const s = i?1:-1;
+        ctx.beginPath();
+        ctx.moveTo(-2, s*-2);
+        ctx.quadraticCurveTo(-10, s*-12, -18, s*-18);
+        ctx.stroke();
+      }
+
+      // Eye
+      ctx.beginPath(); ctx.arc(5,-2.3, 2.3, 0, Math.PI*2); ctx.fillStyle = '#fff'; ctx.fill();
+      ctx.beginPath(); ctx.arc(5.6,-2.3, 1.1, 0, Math.PI*2); ctx.fillStyle = '#000'; ctx.fill();
+
+      ctx.restore();
+    }
+
+    // ===== Scale/petal segment (flame-like)
+    function drawScale(p, angle, s, side){
+      const L = 18*(1-s)+9;           // length
+      const W = 7*(1-s)+2;            // width
+      ctx.save();
+      ctx.translate(p.x, p.y);
+      ctx.rotate(angle + side*0.35);
+      const g = ctx.createLinearGradient(0,0,-L,0);
+      g.addColorStop(0,'rgba(0,0,0,0.9)');
+      g.addColorStop(0.6,'rgba(0,0,0,0.35)');
+      g.addColorStop(1,'rgba(0,0,0,0)');
+      ctx.fillStyle = g;
+      ctx.beginPath();
+      ctx.moveTo(0,0);
+      ctx.bezierCurveTo(-L*0.35, -W, -L*0.75, -W*0.2, -L, 0);
+      ctx.bezierCurveTo(-L*0.75,  W*0.2, -L*0.35,  W, 0, 0);
+      ctx.closePath();
+      ctx.fill();
+      ctx.restore();
+    }
+
+    // ===== Ribs/sweeps
+    function rib(p, nx, ny, s, strength=1){
+      const len = params.ribSpread * (22 * (1 - s) + 8);
+      ctx.beginPath();
+      ctx.moveTo(p.x, p.y);
+      const alpha = clamp(0.8 - s*0.65, 0.05, 0.85) * strength;
+      ctx.strokeStyle = `rgba(0,0,0,${alpha})`;
+      ctx.lineWidth = 1 + (1-s)*1.8*strength;
+      const cp1x = p.x + nx * len * 0.35;
+      const cp1y = p.y + ny * len * 0.35;
+      const cp2x = p.x + nx * len * (0.85 + 0.15*Math.sin(s*6)) + -ny * 12 * (1-s);
+      const cp2y = p.y + ny * len * (0.85 + 0.15*Math.cos(s*6)) +  nx * 12 * (1-s);
+      const ex   = p.x + nx * len;
+      const ey   = p.y + ny * len;
+      ctx.bezierCurveTo(cp1x, cp1y, cp2x, cp2y, ex, ey);
+      ctx.stroke();
+    }
+
+    // ===== Loop control
+    let t = 0, paused = false;
+    addEventListener('keydown', (e)=>{
+      if (e.code === 'Space') paused = !paused;
+      if (e.key.toLowerCase() === 'h') params.headVisible = !params.headVisible;
+      if (e.key.toLowerCase() === 'r'){
+        params.wobbleAmp = 0.7 + Math.random()*1.4;
+        params.wobbleFreq = 1.2 + Math.random()*2.4;
+        params.ribSpread = 1.2 + Math.random()*1.6;
+      }
+    });
+
+    function step(){
+      if (!paused) t += 0.016;
+
+      // Trail background
+      ctx.fillStyle = `rgba(232,226,214,${params.fade})`;
+      ctx.fillRect(0,0,innerWidth,innerHeight);
+
+      // Head spring
+      const hx = lerp(spine[0].x, pointer.x, 0.35);
+      const hy = lerp(spine[0].y, pointer.y, 0.35);
+      const hdx = hx - spine[0].x, hdy = hy - spine[0].y;
+      spine[0].x = hx; spine[0].y = hy;
+      spine[0].ang = Math.atan2(hdy, hdx);
+
+      // Propagate
+      for (let i=1; i<spine.length; i++){
+        const prev = spine[i-1];
+        const s = spine[i];
+        const targetX = prev.x - Math.cos(prev.ang) * params.segLen;
+        const targetY = prev.y - Math.sin(prev.ang) * params.segLen;
+        s.x = lerp(s.x, targetX, params.follow);
+        s.y = lerp(s.y, targetY, params.follow);
+        const ang = Math.atan2(prev.y - s.y, prev.x - s.x);
+        const wob = Math.sin(t*params.wobbleFreq + i*0.35) * params.wobbleAmp * (1 - i/spine.length);
+        s.ang = ang + wob*0.06;
+      }
+
+      // Ribs — concentrated near shoulder & mid
+      for (let r=0; r<params.ribCount; r++){
+        const i = Math.floor(lerp(2, spine.length-6, r/(params.ribCount-1)));
+        const a = spine[i].ang, p = spine[i];
+        const nx = -Math.sin(a), ny = Math.cos(a);
+        const s = i/(spine.length-1);
+        const strength = i<10?1.0: (i<18?0.8:0.5);
+        rib(p, nx, ny, s, strength);
+        ctx.globalAlpha = 0.8; rib(p, -nx, -ny, s, strength*0.85); ctx.globalAlpha = 1;
+      }
+
+      // Scales along the back (alternate sides)
+      for (let i=1; i<spine.length-5; i++){
+        const p = spine[i];
+        const s = i/(spine.length-1);
+        const side = (i%2===0) ? 1 : -1;
+        drawScale(p, p.ang, s, side);
+      }
+
+      // Tail dots
+      const tailStart = spine.length - 10;
+      for (let i=tailStart; i<spine.length; i++){
+        const p = spine[i];
+        const s = (i-tailStart)/9; // 0..1
+        ctx.beginPath();
+        ctx.arc(p.x, p.y, 3*(1-s)+0.6, 0, Math.PI*2);
+        ctx.fillStyle = `rgba(0,0,0,${0.55*(1-s)})`;
+        ctx.fill();
+      }
+
+      drawHead(spine[0], spine[0].ang);
+      requestAnimationFrame(step);
+    }
+    step();
+  </script>
+</body>
+</html>
